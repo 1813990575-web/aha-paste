@@ -199,7 +199,7 @@ struct ContentView: View {
             .foregroundStyle(Color.black.opacity(0.84))
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 11)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.black.opacity(0.14))
@@ -354,7 +354,7 @@ struct ContentView: View {
                 }
             } else {
                 SubmitField(
-                    placeholder: "输入要保存的内容...",
+                    placeholder: "在这儿粘贴内容，按下回车发送",
                     text: $composerText,
                     onSubmit: {
                         submit(store: store)
@@ -362,7 +362,7 @@ struct ContentView: View {
                     fontSize: 13,
                     focusRequestID: composerContentFocusID
                 )
-                .frame(minHeight: 26)
+                .frame(minHeight: 22)
             }
 
             SubmitField(
@@ -374,7 +374,7 @@ struct ContentView: View {
                 fontSize: 13,
                 focusRequestID: composerNoteFocusID
             )
-            .frame(minHeight: 26)
+            .frame(minHeight: 24)
 
             if let errorMessage, errorMessage.isEmpty == false {
                 Text(errorMessage)
@@ -390,7 +390,9 @@ struct ContentView: View {
                     .opacity(0.001)
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.top, 13)
+        .padding(.bottom, 14)
         .background(
             RoundedRectangle(cornerRadius: 0, style: .continuous)
                 .fill(Color.white)
