@@ -7,10 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let settings = AppSettings()
     @Published var isClipboardMonitoringRunning = false
     @Published var lastClipboardCaptureMessage: String?
+    @Published var lastUpdateCheckMessage: String?
 
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let clipboardMonitor = ClipboardMonitor()
+    private let updateChecker = UpdateChecker()
     private var container: ModelContainer?
     private var outsideClickMonitor: Any?
 
@@ -41,6 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupStatusItem()
         setupPopover()
         observeSettings()
+
+        if settings.isAutomaticUpdateCheckEnabled {
+            Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                await checkForUpdates(isManual: false)
+            }
+        }
     }
 
     @objc func togglePopover(_ sender: AnyObject?) {
@@ -151,5 +160,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if settings.isClipboardMonitoringEnabled, let container = self.container {
             clipboardMonitor.start(container: container)
         }
+    }
+
+    func checkForUpdates(isManual: Bool) async {
+        do {
+            let result = try await updateChecker.checkForUpdates()
+            switch result {
+            case .updateAvailable(let release):
+                let version = release.tagName.replacingOccurrences(of: #"^[Vv]"#, with: "", options: .regularExpression)
+                lastUpdateCheckMessage = "发现新版本 \(version)"
+                updateChecker.presentUpdateAlert(for: release)
+            case .upToDate:
+                lastUpdateCheckMessage = "当前已是最新版本"
+                if isManual {
+                    presentInfoAlert(
+                        title: "当前已是最新版本",
+                        message: "现在不需要下载新的版本。"
+                    )
+                }
+            }
+        } catch {
+            lastUpdateCheckMessage = error.localizedDescription
+            if isManual {
+                presentInfoAlert(
+                    title: "检查更新失败",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func presentInfoAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "知道了")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 }

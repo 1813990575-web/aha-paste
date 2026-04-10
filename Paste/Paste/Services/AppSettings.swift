@@ -41,12 +41,19 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var isAutomaticUpdateCheckEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isAutomaticUpdateCheckEnabled, forKey: Self.updateCheckKey)
+        }
+    }
+
     var onClipboardMonitoringChanged: ((Bool) -> Void)?
 
     private static let monitoringKey = "settings.clipboardMonitoringEnabled"
     private static let panelHeightKey = "settings.panelHeight"
     private static let soundKey = "settings.soundEnabled"
     private static let copySoundKey = "settings.copySound"
+    private static let updateCheckKey = "settings.automaticUpdateCheckEnabled"
 
     init() {
         isClipboardMonitoringEnabled = UserDefaults.standard.bool(forKey: Self.monitoringKey)
@@ -59,5 +66,10 @@ final class AppSettings: ObservableObject {
         }
         let rawSound = UserDefaults.standard.string(forKey: Self.copySoundKey)
         selectedCopySound = CopySound(rawValue: rawSound ?? "") ?? .frog
+        if UserDefaults.standard.object(forKey: Self.updateCheckKey) == nil {
+            isAutomaticUpdateCheckEnabled = true
+        } else {
+            isAutomaticUpdateCheckEnabled = UserDefaults.standard.bool(forKey: Self.updateCheckKey)
+        }
     }
 }
