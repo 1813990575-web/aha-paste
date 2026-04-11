@@ -25,9 +25,6 @@ struct ClipRowView: View {
     }
 
     private var displayTitle: String {
-        if item.note.isEmpty == false {
-            return item.note
-        }
         return item.contentText ?? ""
     }
 
@@ -35,8 +32,7 @@ struct ClipRowView: View {
         guard item.note.isEmpty == false else {
             return nil
         }
-        let body = item.contentText ?? ""
-        return body.isEmpty ? nil : body
+        return item.note
     }
 
     private var contentURL: URL? {
@@ -139,7 +135,7 @@ struct ClipRowView: View {
                         if item.note.isEmpty, let contentURL, let raw = item.contentText {
                             Link(destination: contentURL) {
                                 Text(raw)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 12.5, weight: .semibold))
                                     .foregroundStyle(Color.accentColor)
                                     .underline(false)
                                     .lineLimit(2)
@@ -149,31 +145,18 @@ struct ClipRowView: View {
                             .modifier(LinkCursorModifier())
                         } else {
                             Text(displayTitle)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 12.5, weight: .semibold))
                                 .lineSpacing(2)
                                 .foregroundStyle(.primary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
                         if let displayBody {
-                            if let contentURL {
-                                Link(destination: contentURL) {
-                                    Text(displayBody)
-                                        .font(.system(size: 10.5, weight: .medium))
-                                        .foregroundStyle(Color.accentColor)
-                                        .underline(false)
-                                        .lineLimit(2)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .buttonStyle(.plain)
-                                .modifier(LinkCursorModifier())
-                            } else {
-                                Text(displayBody)
-                                    .font(.system(size: 10.5, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(3)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                            Text(displayBody)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     .padding(.leading, 10)

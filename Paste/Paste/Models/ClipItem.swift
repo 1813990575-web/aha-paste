@@ -14,6 +14,7 @@ final class ClipItem {
     var note: String
     var imageRelativePath: String?
     var createdAt: Date
+    var sortOrder: Int?
     @Relationship(deleteRule: .cascade, inverse: \ItemTagLink.item) var tagLinks: [ItemTagLink]
 
     init(
@@ -22,7 +23,8 @@ final class ClipItem {
         contentText: String? = nil,
         note: String = "",
         imageRelativePath: String? = nil,
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        sortOrder: Int? = nil
     ) {
         self.id = id
         self.kindRawValue = kind.rawValue
@@ -30,6 +32,7 @@ final class ClipItem {
         self.note = note
         self.imageRelativePath = imageRelativePath
         self.createdAt = createdAt
+        self.sortOrder = sortOrder
         self.tagLinks = []
     }
 

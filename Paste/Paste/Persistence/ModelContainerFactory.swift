@@ -67,6 +67,18 @@ final class ModelContainerFactory {
             tag.sortOrder = index
         }
 
+        let allItems = try context.fetch(FetchDescriptor<ClipItem>())
+            .sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt {
+                    return lhs.createdAt > rhs.createdAt
+                }
+                return lhs.id.uuidString > rhs.id.uuidString
+            }
+
+        for (index, item) in allItems.enumerated() where item.sortOrder != index {
+            item.sortOrder = index
+        }
+
         try context.save()
     }
 }

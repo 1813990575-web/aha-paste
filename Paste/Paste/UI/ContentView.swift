@@ -30,6 +30,11 @@ struct ContentView: View {
     @State private var composerContentFocusID = 0
     @State private var composerNoteFocusID = 0
     @State private var draggedTagID: UUID?
+    @State private var draggedItemID: UUID?
+    @State private var itemDropIndicator: ClipItemDropIndicator?
+    @State private var itemRowHeights: [UUID: CGFloat] = [:]
+    @State private var itemFrames: [UUID: CGRect] = [:]
+    @State private var draggedItemOffset: CGSize = .zero
 
     var body: some View {
         let store = ClipStore(context: modelContext)
@@ -98,14 +103,55 @@ struct ContentView: View {
     }
 
     private func itemsList(store: ClipStore, items: [ClipItem], customTags: [Tag]) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(items, id: \.id) { item in
-                    clipRow(store: store, item: item, customTags: customTags)
+        ZStack(alignment: .topLeading) {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(items, id: \.id) { item in
+                        clipRow(store: store, item: item, customTags: customTags)
+                            .onGeometryChange(for: CGFloat.self) { geometry in
+                                geometry.size.height
+                            } action: { newHeight in
+                                itemRowHeights[item.id] = newHeight
+                            }
+                            .onGeometryChange(for: CGRect.self) { geometry in
+                                geometry.frame(in: .named("clip-items-list"))
+                            } action: { newFrame in
+                                itemFrames[item.id] = newFrame
+                            }
+                            .opacity(draggedItemID == item.id ? 0.001 : 1)
+                            .overlay(alignment: .top) {
+                                if itemDropIndicator?.itemID == item.id, itemDropIndicator?.placement == .before {
+                                    clipDropInsertionLine
+                                        .offset(y: -8)
+                                }
+                            }
+                            .overlay(alignment: .bottom) {
+                                if itemDropIndicator?.itemID == item.id, itemDropIndicator?.placement == .after {
+                                    clipDropInsertionLine
+                                        .offset(y: 8)
+                                }
+                            }
+                            .animation(.spring(response: 0.22, dampingFraction: 0.9), value: draggedItemID)
+                            .animation(.spring(response: 0.22, dampingFraction: 0.9), value: itemDropIndicator)
+                            .simultaneousGesture(itemReorderGesture(for: item, items: items, store: store))
+                    }
                 }
+                .padding(16)
             }
-            .padding(16)
+            if let draggedItemID,
+               let item = items.first(where: { $0.id == draggedItemID }),
+               let frame = itemFrames[draggedItemID] {
+                clipRow(store: store, item: item, customTags: customTags)
+                    .frame(width: frame.width)
+                    .scaleEffect(0.985)
+                    .shadow(color: Color.black.opacity(0.16), radius: 16, y: 8)
+                    .offset(x: frame.minX + 18, y: frame.minY)
+                    .offset(draggedItemOffset)
+                    .allowsHitTesting(false)
+                    .zIndex(20)
+            }
         }
+        .coordinateSpace(name: "clip-items-list")
     }
 
     private func clipRow(store: ClipStore, item: ClipItem, customTags: [Tag]) -> some View {
@@ -127,6 +173,131 @@ struct ContentView: View {
             try? store.assignCustomTag(tag, to: item)
             refreshToken = UUID()
         }
+    }
+
+    private var clipDropInsertionLine: some View {
+        Capsule(style: .continuous)
+            .fill(Color.accentColor.opacity(0.95))
+            .frame(height: 3)
+            .padding(.horizontal, 6)
+            .shadow(color: Color.accentColor.opacity(0.2), radius: 4, y: 1)
+    }
+
+    private func itemReorderGesture(for item: ClipItem, items: [ClipItem], store: ClipStore) -> some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .named("clip-items-list"))
+            .onChanged { value in
+                if draggedItemID != item.id {
+                    draggedItemID = item.id
+                }
+                draggedItemOffset = value.translation
+                itemDropIndicator = resolveDropIndicator(
+                    locationY: value.location.y,
+                    draggingItemID: item.id,
+                    items: items
+                )
+            }
+            .onEnded { value in
+                let indicator = resolveDropIndicator(
+                    locationY: value.location.y,
+                    draggingItemID: item.id,
+                    items: items
+                )
+
+                if let indicator {
+                    try? store.moveItem(item, to: indicator.targetIndex, in: items)
+                }
+
+                draggedItemID = nil
+                draggedItemOffset = .zero
+                itemDropIndicator = nil
+            }
+    }
+
+    private func resolveDropIndicator(locationY: CGFloat, draggingItemID: UUID, items: [ClipItem]) -> ClipItemDropIndicator? {
+        let orderedTargets = items
+            .filter { $0.id != draggingItemID }
+            .compactMap { item -> (ClipItem, CGRect)? in
+                guard let frame = itemFrames[item.id] else { return nil }
+                return (item, frame)
+            }
+            .sorted { lhs, rhs in
+                lhs.1.minY < rhs.1.minY
+            }
+
+        guard orderedTargets.isEmpty == false else {
+            return nil
+        }
+
+        if let first = orderedTargets.first, locationY <= first.1.minY {
+            return makeDropIndicator(
+                targetItemID: first.0.id,
+                placement: .before,
+                draggingItemID: draggingItemID,
+                items: items
+            )
+        }
+
+        if let last = orderedTargets.last, locationY >= last.1.maxY {
+            return makeDropIndicator(
+                targetItemID: last.0.id,
+                placement: .after,
+                draggingItemID: draggingItemID,
+                items: items
+            )
+        }
+
+        for (item, frame) in orderedTargets {
+            if locationY >= frame.minY && locationY <= frame.maxY {
+                let placement: ClipItemDropIndicator.Placement = locationY < frame.midY ? .before : .after
+                return makeDropIndicator(
+                    targetItemID: item.id,
+                    placement: placement,
+                    draggingItemID: draggingItemID,
+                    items: items
+                )
+            }
+        }
+
+        for index in 0..<(orderedTargets.count - 1) {
+            let current = orderedTargets[index]
+            let next = orderedTargets[index + 1]
+            if locationY > current.1.maxY && locationY < next.1.minY {
+                return makeDropIndicator(
+                    targetItemID: next.0.id,
+                    placement: .before,
+                    draggingItemID: draggingItemID,
+                    items: items
+                )
+            }
+        }
+
+        return nil
+    }
+
+    private func makeDropIndicator(
+        targetItemID: UUID,
+        placement: ClipItemDropIndicator.Placement,
+        draggingItemID: UUID,
+        items: [ClipItem]
+    ) -> ClipItemDropIndicator? {
+        guard let sourceIndex = items.firstIndex(where: { $0.id == draggingItemID }),
+              let targetIndex = items.firstIndex(where: { $0.id == targetItemID }) else {
+            return nil
+        }
+
+        let proposedTargetIndex = placement == .before ? targetIndex : targetIndex + 1
+        let boundedTargetIndex = min(max(proposedTargetIndex, 0), items.count)
+        let adjustedTargetIndex = boundedTargetIndex > sourceIndex ? boundedTargetIndex - 1 : boundedTargetIndex
+
+        guard adjustedTargetIndex != sourceIndex else {
+            return nil
+        }
+
+        return ClipItemDropIndicator(
+            itemID: targetItemID,
+            placement: placement,
+            targetIndex: adjustedTargetIndex
+        )
     }
 
     private func createTagSheet(store: ClipStore) -> some View {
@@ -578,6 +749,17 @@ private struct TagReorderDropDelegate: DropDelegate {
             return
         }
     }
+}
+
+private struct ClipItemDropIndicator: Equatable {
+    enum Placement {
+        case before
+        case after
+    }
+
+    let itemID: UUID
+    let placement: Placement
+    let targetIndex: Int
 }
 
 private struct EditClipSheet: View {

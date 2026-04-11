@@ -49,8 +49,7 @@ final class ClipStore {
     }
 
     func fetchItems(searchText: String, filter: ClipFilter) throws -> [ClipItem] {
-        let descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        var items = try context.fetch(descriptor)
+        var items = try sortedItems()
 
         switch filter {
         case .all:
@@ -88,7 +87,12 @@ final class ClipStore {
             throw ClipStoreError.nothingToSave
         }
 
-        let item = ClipItem(kind: .text, contentText: trimmedContent, note: trimmedNote)
+        let item = ClipItem(
+            kind: .text,
+            contentText: trimmedContent,
+            note: trimmedNote,
+            sortOrder: nextItemSortOrder()
+        )
         context.insert(item)
         try attach(tagsNamed: [SystemTagName.all], to: item)
         if let customTag = try fetchCustomTag(id: customTagID) {
@@ -101,7 +105,12 @@ final class ClipStore {
     func saveImage(_ image: NSImage, note: String) throws {
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let relativePath = try ImageFileStore.shared.save(image: image)
-        let item = ClipItem(kind: .image, note: trimmedNote, imageRelativePath: relativePath)
+        let item = ClipItem(
+            kind: .image,
+            note: trimmedNote,
+            imageRelativePath: relativePath,
+            sortOrder: nextItemSortOrder()
+        )
         context.insert(item)
         try attach(tagsNamed: [SystemTagName.images], to: item)
         try context.save()
@@ -285,6 +294,41 @@ final class ClipStore {
             .first(where: { $0.isSystem == false })
     }
 
+    func moveItem(_ item: ClipItem, to targetIndex: Int, in visibleItems: [ClipItem]) throws {
+        guard let sourceVisibleIndex = visibleItems.firstIndex(where: { $0.id == item.id }) else {
+            return
+        }
+
+        let boundedTarget = min(max(targetIndex, 0), max(visibleItems.count - 1, 0))
+        guard boundedTarget != sourceVisibleIndex else {
+            return
+        }
+
+        var reorderedVisibleItems = visibleItems
+        let movedItem = reorderedVisibleItems.remove(at: sourceVisibleIndex)
+        reorderedVisibleItems.insert(movedItem, at: boundedTarget)
+
+        let visibleIDs = Set(reorderedVisibleItems.map(\.id))
+        let allItems = try sortedItems()
+        var reorderedVisibleIterator = reorderedVisibleItems.makeIterator()
+        var reorderedAllItems: [ClipItem] = []
+        reorderedAllItems.reserveCapacity(allItems.count)
+
+        for existingItem in allItems {
+            if visibleIDs.contains(existingItem.id), let nextVisibleItem = reorderedVisibleIterator.next() {
+                reorderedAllItems.append(nextVisibleItem)
+            } else {
+                reorderedAllItems.append(existingItem)
+            }
+        }
+
+        for (index, clipItem) in reorderedAllItems.enumerated() {
+            clipItem.sortOrder = index
+        }
+
+        try context.save()
+    }
+
     func assignCustomTag(_ tag: Tag?, to item: ClipItem) throws {
         let customLinks = item.tagLinks.filter { $0.tag?.isSystem == false }
         for link in customLinks {
@@ -334,15 +378,19 @@ final class ClipStore {
             return nil
         }
 
-        let descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        let duplicate = try context.fetch(descriptor).first {
+        let duplicate = try sortedItems().first {
             $0.kind == .text && $0.contentText == trimmed
         }
         if duplicate != nil {
             return nil
         }
 
-        let item = ClipItem(kind: .text, contentText: trimmed, note: "自动监听")
+        let item = ClipItem(
+            kind: .text,
+            contentText: trimmed,
+            note: "自动监听",
+            sortOrder: nextItemSortOrder()
+        )
         context.insert(item)
         try attach(tagsNamed: [SystemTagName.all], to: item)
         try context.save()
@@ -412,5 +460,25 @@ final class ClipStore {
 
     private func nextColorHex(after count: Int, avoiding previousHex: String?) -> String {
         paletteColor(for: count, previousHex: previousHex)
+    }
+
+    private func sortedItems() throws -> [ClipItem] {
+        let items = try context.fetch(FetchDescriptor<ClipItem>())
+        return items.sorted { lhs, rhs in
+            let lhsOrder = lhs.sortOrder ?? Int.max
+            let rhsOrder = rhs.sortOrder ?? Int.max
+            if lhsOrder != rhsOrder {
+                return lhsOrder < rhsOrder
+            }
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt > rhs.createdAt
+            }
+            return lhs.id.uuidString > rhs.id.uuidString
+        }
+    }
+
+    private func nextItemSortOrder() -> Int {
+        let currentMinimum = (try? context.fetch(FetchDescriptor<ClipItem>()).compactMap(\.sortOrder).min()) ?? 0
+        return currentMinimum - 1
     }
 }
