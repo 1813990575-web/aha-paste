@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var lastUpdateCheckMessage: String?
 
     private var statusItem: NSStatusItem?
+    private var statusMenu: NSMenu?
     private let popover = NSPopover()
     private let clipboardMonitor = ClipboardMonitor()
     private let updateChecker = UpdateChecker()
@@ -52,6 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
+    @objc func handleStatusItemClick(_ sender: AnyObject?) {
+        if let event = NSApp.currentEvent, event.type == .rightMouseUp {
+            showStatusMenu()
+            return
+        }
+
+        togglePopover(sender)
+    }
+
     @objc func togglePopover(_ sender: AnyObject?) {
         guard let button = statusItem?.button else {
             return
@@ -73,6 +83,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc func showPopoverFromMenu(_ sender: AnyObject?) {
+        if popover.isShown == false {
+            togglePopover(sender)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    @objc func quitApp(_ sender: AnyObject?) {
+        NSApp.terminate(sender)
+    }
+
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Aha paste")
@@ -84,9 +106,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if item.button?.image == nil {
             item.button?.title = "A"
         }
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.target = self
-        item.button?.action = #selector(togglePopover(_:))
+        item.button?.action = #selector(handleStatusItemClick(_:))
         statusItem = item
+        statusMenu = makeStatusMenu()
+    }
+
+    private func makeStatusMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(
+            withTitle: "显示 Aha paste",
+            action: #selector(showPopoverFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        menu.addItem(
+            withTitle: "偏好设置…",
+            action: #selector(openSettings(_:)),
+            keyEquivalent: ","
+        )
+        menu.addItem(.separator())
+        menu.addItem(
+            withTitle: "退出 Aha paste",
+            action: #selector(quitApp(_:)),
+            keyEquivalent: "q"
+        )
+        menu.items.forEach { $0.target = self }
+        return menu
+    }
+
+    private func showStatusMenu() {
+        guard let button = statusItem?.button, let statusMenu else {
+            return
+        }
+
+        stopOutsideClickMonitor()
+        popover.performClose(nil)
+        statusItem?.menu = statusMenu
+        button.performClick(nil)
+        statusItem?.menu = nil
     }
 
     private func setupPopover() {
