@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import SwiftData
 
 enum SystemTagName {
@@ -17,13 +18,113 @@ final class ModelContainerFactory {
             ItemTagLink.self
         ])
 
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
         do {
+            let storeName = Self.storeName
+            try Self.migrateLegacyStoreIfNeeded(storeName: storeName)
+            let config = ModelConfiguration(storeName, schema: schema, isStoredInMemoryOnly: false)
             container = try ModelContainer(for: schema, configurations: [config])
             try ensureSystemTags()
         } catch {
             fatalError("Failed to initialize model container: \(error)")
+        }
+    }
+
+    private static var storeName: String {
+        let fallback = "aha.paste"
+        guard
+            let bundleID = Bundle.main.bundleIdentifier?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            bundleID.isEmpty == false
+        else {
+            return fallback
+        }
+        return bundleID
+    }
+
+    private static func storeURL(named name: String) -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return appSupport.appendingPathComponent("\(name).store", conformingTo: .data)
+    }
+
+    private static func migrateLegacyStoreIfNeeded(storeName: String) throws {
+        guard storeName != "default" else {
+            return
+        }
+
+        let fileManager = FileManager.default
+        let legacyURL = Self.storeURL(named: "default")
+        let targetURL = Self.storeURL(named: storeName)
+
+        guard fileManager.fileExists(atPath: targetURL.path) == false else {
+            return
+        }
+
+        guard fileManager.fileExists(atPath: legacyURL.path) else {
+            return
+        }
+
+        guard legacyStoreLooksLikePasteStore(at: legacyURL) else {
+            return
+        }
+
+        try copyStoreFileGroup(fromBaseURL: legacyURL, toBaseURL: targetURL)
+    }
+
+    private static func copyStoreFileGroup(fromBaseURL source: URL, toBaseURL target: URL) throws {
+        let fileManager = FileManager.default
+
+        for suffix in ["", "-wal", "-shm"] {
+            let sourceURL = source.appendingPathExtensionSuffix(suffix)
+            let targetURL = target.appendingPathExtensionSuffix(suffix)
+
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                continue
+            }
+
+            if fileManager.fileExists(atPath: targetURL.path) {
+                try fileManager.removeItem(at: targetURL)
+            }
+            try fileManager.copyItem(at: sourceURL, to: targetURL)
+        }
+    }
+
+    private static func legacyStoreLooksLikePasteStore(at url: URL) -> Bool {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            if let database {
+                sqlite3_close(database)
+            }
+            return false
+        }
+
+        defer {
+            sqlite3_close(database)
+        }
+
+        let sql = "SELECT name FROM sqlite_master WHERE type='table';"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            if let statement {
+                sqlite3_finalize(statement)
+            }
+            return false
+        }
+
+        defer {
+            sqlite3_finalize(statement)
+        }
+
+        var tableNames = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let namePtr = sqlite3_column_text(statement, 0) else {
+                continue
+            }
+            tableNames.insert(String(cString: namePtr).uppercased())
+        }
+
+        let requiredTokens = ["CLIPITEM", "TAG", "ITEMTAGLINK"]
+        return requiredTokens.allSatisfy { token in
+            tableNames.contains(where: { $0.contains(token) })
         }
     }
 
@@ -80,5 +181,14 @@ final class ModelContainerFactory {
         }
 
         try context.save()
+    }
+}
+
+private extension URL {
+    func appendingPathExtensionSuffix(_ suffix: String) -> URL {
+        guard suffix.isEmpty == false else {
+            return self
+        }
+        return URL(fileURLWithPath: path + suffix)
     }
 }

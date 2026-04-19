@@ -29,7 +29,6 @@ struct ContentView: View {
     @State private var isToastVisible = false
     @State private var composerContentFocusID = 0
     @State private var composerNoteFocusID = 0
-    @State private var draggedTagID: UUID?
     @State private var draggedItemID: UUID?
     @State private var itemDropIndicator: ClipItemDropIndicator?
     @State private var itemRowHeights: [UUID: CGFloat] = [:]
@@ -38,9 +37,10 @@ struct ContentView: View {
 
     var body: some View {
         let store = ClipStore(context: modelContext)
-        let items = (try? store.fetchItems(searchText: searchText, filter: selectedFilter)) ?? []
-        let customTags = (try? store.fetchCustomTags()) ?? []
-        let customTagCounts = (try? store.customTagItemCounts()) ?? [:]
+        let loadedData = loadData(store: store)
+        let items = loadedData.items
+        let customTags = loadedData.customTags
+        let customTagCounts = loadedData.customTagCounts
 
         VStack(spacing: 0) {
             header
@@ -49,7 +49,7 @@ struct ContentView: View {
             Divider()
             itemsList(store: store, items: items, customTags: customTags)
             Divider()
-            composer(store: store)
+            composer(store: store, loadErrorMessage: loadedData.errorMessage)
         }
         .background(Color.clear)
         .id(refreshToken)
@@ -404,106 +404,69 @@ struct ContentView: View {
             .padding(.leading, 16)
             .padding(.trailing, 8)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    Button {
-                        selectedFilter = .images
-                    } label: {
-                        Text(ClipFilter.images.title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(selectedFilter == .images ? Color.white : Color.primary.opacity(0.78))
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 9)
-                            .background(
-                                Capsule()
-                                    .fill(selectedFilter == .images ? Color.accentColor : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.borderless)
-                    .fixedSize()
-
-                    ForEach(customTags, id: \.id) { tag in
-                        tagFilterButton(
-                            store: store,
-                            tag: tag,
-                            customTags: customTags,
-                            count: counts[tag.id, default: 0]
-                        )
+            TagReorderScrollStrip(
+                tags: customTags,
+                counts: counts,
+                selectedTagID: selectedTagID,
+                isImagesSelected: selectedFilter == .images,
+                onSelectImages: {
+                    selectedFilter = .images
+                },
+                onSelectTag: { tagID in
+                    selectedFilter = .tag(tagID)
+                },
+                onMoveTag: { tagID, targetIndex in
+                    guard let tag = customTags.first(where: { $0.id == tagID }) else {
+                        return
                     }
 
-                    Button {
-                        isCreateTagSheetPresented = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 28, height: 28)
+                    do {
+                        try store.moveTag(tag, to: targetIndex)
+                        refreshToken = UUID()
+                        errorMessage = nil
+                    } catch {
+                        errorMessage = "标签排序失败：\(error.localizedDescription)"
+                        print("Tag reorder failed: \(error.localizedDescription)")
                     }
-                    .buttonStyle(.borderless)
-                    .fixedSize()
+                },
+                onRenameTag: { tagID in
+                    guard let tag = customTags.first(where: { $0.id == tagID }) else {
+                        return
+                    }
+                    renameTagName = tag.name
+                    tagPendingRename = tag
+                },
+                onDeleteTag: { tagID in
+                    guard let tag = customTags.first(where: { $0.id == tagID }) else {
+                        return
+                    }
+                    tagPendingDelete = tag
+                },
+                onCreateTag: {
+                    isCreateTagSheetPresented = true
                 }
-                .padding(.trailing, 8)
-            }
+            )
+            .frame(height: 34)
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 8)
+            .padding(.top, 1)
+            .padding(.bottom, 1)
         }
         .padding(.bottom, 10)
     }
 
-    private func tagFilterButton(store: ClipStore, tag: Tag, customTags: [Tag], count: Int) -> some View {
-        let isSelected = selectedFilter == .tag(tag.id)
-
-        return Button {
-            selectedFilter = .tag(tag.id)
-        } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(tag.accentColor)
-                    .frame(width: 6, height: 6)
-
-                Text(tag.name)
-
-                Text("\(count)")
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.92) : Color.primary.opacity(0.52))
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.78))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.accentColor : Color.clear)
-            )
+    private var selectedTagID: UUID? {
+        guard case .tag(let tagID) = selectedFilter else {
+            return nil
         }
-        .buttonStyle(.borderless)
-        .fixedSize()
-        .opacity(draggedTagID == tag.id ? 0.72 : 1)
-        .onDrag {
-            draggedTagID = tag.id
-            return NSItemProvider(object: tag.id.uuidString as NSString)
-        }
-        .onDrop(
-            of: [UTType.text],
-            delegate: TagReorderDropDelegate(
-                targetTag: tag,
-                tags: customTags,
-                draggedTagID: $draggedTagID,
-                onMove: { draggedTag, targetIndex in
-                    try? store.moveTag(draggedTag, to: targetIndex)
-                    refreshToken = UUID()
-                }
-            )
-        )
-        .contextMenu {
-            Button("重命名") {
-                renameTagName = tag.name
-                tagPendingRename = tag
-            }
-            Button("删除", role: .destructive) {
-                tagPendingDelete = tag
-            }
-        }
+        return tagID
     }
 
-    private func composer(store: ClipStore) -> some View {
-        VStack(spacing: 10) {
+    private func composer(store: ClipStore, loadErrorMessage: String?) -> some View {
+        let visibleErrorMessage = errorMessage ?? loadErrorMessage
+
+        return VStack(spacing: 10) {
             if let pendingImage {
                 PendingImageView(image: pendingImage) {
                     self.pendingImage = nil
@@ -547,8 +510,8 @@ struct ContentView: View {
             )
             .frame(minHeight: 24)
 
-            if let errorMessage, errorMessage.isEmpty == false {
-                Text(errorMessage)
+            if let visibleErrorMessage, visibleErrorMessage.isEmpty == false {
+                Text(visibleErrorMessage)
                     .font(.system(size: 12))
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -710,45 +673,34 @@ struct ContentView: View {
             composerContentFocusID += 1
         }
     }
+
+    private func loadData(store: ClipStore) -> LoadedStoreData {
+        do {
+            let items = try store.fetchItems(searchText: searchText, filter: selectedFilter)
+            let customTags = try store.fetchCustomTags()
+            let customTagCounts = try store.customTagItemCounts()
+            return LoadedStoreData(
+                items: items,
+                customTags: customTags,
+                customTagCounts: customTagCounts,
+                errorMessage: nil
+            )
+        } catch {
+            return LoadedStoreData(
+                items: [],
+                customTags: [],
+                customTagCounts: [:],
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
 }
 
-private struct TagReorderDropDelegate: DropDelegate {
-    let targetTag: Tag
-    let tags: [Tag]
-    @Binding var draggedTagID: UUID?
-    let onMove: (Tag, Int) -> Void
-
-    func dropEntered(info: DropInfo) {
-        guard
-            let draggedTagID,
-            draggedTagID != targetTag.id,
-            let draggedTag = tags.first(where: { $0.id == draggedTagID }),
-            let targetIndex = tags.firstIndex(where: { $0.id == targetTag.id })
-        else {
-            return
-        }
-
-        onMove(draggedTag, targetIndex)
-    }
-
-    func validateDrop(info: DropInfo) -> Bool {
-        true
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        draggedTagID = nil
-        return true
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func dropExited(info: DropInfo) {
-        guard info.location.x.isNaN == false else {
-            return
-        }
-    }
+private struct LoadedStoreData {
+    let items: [ClipItem]
+    let customTags: [Tag]
+    let customTagCounts: [UUID: Int]
+    let errorMessage: String?
 }
 
 private struct ClipItemDropIndicator: Equatable {
@@ -760,6 +712,533 @@ private struct ClipItemDropIndicator: Equatable {
     let itemID: UUID
     let placement: Placement
     let targetIndex: Int
+}
+
+private struct TagChipView: View {
+    let title: String
+    let countText: String?
+    let dotColor: Color?
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let dotColor {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 6, height: 6)
+            }
+
+            Text(title)
+
+            if let countText {
+                Text(countText)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.92) : Color.primary.opacity(0.52))
+            }
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.78))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            Capsule()
+                .fill(isSelected ? Color.accentColor : Color.clear)
+        )
+        .fixedSize()
+    }
+}
+
+private struct TagReorderScrollStrip: NSViewRepresentable {
+    let tags: [Tag]
+    let counts: [UUID: Int]
+    let selectedTagID: UUID?
+    let isImagesSelected: Bool
+    let onSelectImages: () -> Void
+    let onSelectTag: (UUID) -> Void
+    let onMoveTag: (UUID, Int) -> Void
+    let onRenameTag: (UUID) -> Void
+    let onDeleteTag: (UUID) -> Void
+    let onCreateTag: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> TagReorderStripRootView {
+        let view = TagReorderStripRootView()
+        view.coordinator = context.coordinator
+        view.apply(parent: self)
+        return view
+    }
+
+    func updateNSView(_ nsView: TagReorderStripRootView, context: Context) {
+        context.coordinator.parent = self
+        nsView.coordinator = context.coordinator
+        nsView.apply(parent: self)
+    }
+
+    final class Coordinator: NSObject {
+        var parent: TagReorderScrollStrip
+
+        init(_ parent: TagReorderScrollStrip) {
+            self.parent = parent
+        }
+
+        @objc func selectImages() {
+            parent.onSelectImages()
+        }
+
+        @objc func createTag() {
+            parent.onCreateTag()
+        }
+
+        @objc func renameTag(_ sender: NSMenuItem) {
+            guard let tagID = sender.representedObject as? UUID else {
+                return
+            }
+            parent.onRenameTag(tagID)
+        }
+
+        @objc func deleteTag(_ sender: NSMenuItem) {
+            guard let tagID = sender.representedObject as? UUID else {
+                return
+            }
+            parent.onDeleteTag(tagID)
+        }
+
+        func makeMenu(for tagID: UUID) -> NSMenu {
+            let menu = NSMenu()
+
+            let renameItem = NSMenuItem(title: "重命名", action: #selector(renameTag(_:)), keyEquivalent: "")
+            renameItem.target = self
+            renameItem.representedObject = tagID
+            menu.addItem(renameItem)
+
+            let deleteItem = NSMenuItem(title: "删除", action: #selector(deleteTag(_:)), keyEquivalent: "")
+            deleteItem.target = self
+            deleteItem.representedObject = tagID
+            menu.addItem(deleteItem)
+
+            return menu
+        }
+    }
+}
+
+private final class HiddenScrollerScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        horizontalScroller?.isHidden = true
+        horizontalScroller?.alphaValue = 0
+        verticalScroller?.isHidden = true
+        verticalScroller?.alphaValue = 0
+    }
+}
+
+private final class TagReorderStripRootView: NSView {
+    private let imagesButton = BorderlessHostingButton(rootView: AnyView(EmptyView()))
+    private let addButton = NSButton()
+    private let scrollView = HiddenScrollerScrollView()
+    private let canvasView = TagStripCanvasView()
+
+    weak var coordinator: TagReorderScrollStrip.Coordinator? {
+        didSet {
+            imagesButton.target = coordinator
+            imagesButton.action = #selector(TagReorderScrollStrip.Coordinator.selectImages)
+            addButton.target = coordinator
+            addButton.action = #selector(TagReorderScrollStrip.Coordinator.createTag)
+            canvasView.coordinator = coordinator
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        imagesButton.translatesAutoresizingMaskIntoConstraints = false
+
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addButton.isBordered = false
+        addButton.bezelStyle = .regularSquare
+        addButton.imagePosition = .imageOnly
+        addButton.contentTintColor = .labelColor
+        addButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加标签")
+        addButton.focusRingType = .none
+        addButton.setButtonType(.momentaryPushIn)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.horizontalScrollElasticity = .automatic
+        scrollView.verticalScrollElasticity = .none
+        scrollView.documentView = canvasView
+
+        addSubview(imagesButton)
+        addSubview(scrollView)
+        addSubview(addButton)
+
+        let minScrollWidth = scrollView.widthAnchor.constraint(greaterThanOrEqualToConstant: 32)
+        minScrollWidth.priority = .defaultLow
+
+        NSLayoutConstraint.activate([
+            imagesButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imagesButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            scrollView.leadingAnchor.constraint(equalTo: imagesButton.trailingAnchor, constant: 5),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            addButton.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: 5),
+            addButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            addButton.widthAnchor.constraint(equalToConstant: 28),
+            addButton.heightAnchor.constraint(equalToConstant: 28),
+
+            minScrollWidth
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func apply(parent: TagReorderScrollStrip) {
+        imagesButton.update(
+            rootView: AnyView(
+                TagChipView(
+                    title: ClipFilter.images.title,
+                    countText: nil,
+                    dotColor: nil,
+                    isSelected: parent.isImagesSelected
+                )
+            )
+        )
+        canvasView.apply(parent: parent)
+    }
+}
+
+private final class BorderlessHostingButton: NSButton {
+    private let hostingView: NSHostingView<AnyView>
+
+    init(rootView: AnyView) {
+        self.hostingView = NSHostingView(rootView: rootView)
+        super.init(frame: .zero)
+        isBordered = false
+        bezelStyle = .regularSquare
+        focusRingType = .none
+        imagePosition = .imageOnly
+        translatesAutoresizingMaskIntoConstraints = false
+
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    func update(rootView: AnyView) {
+        hostingView.rootView = rootView
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+private final class TagStripCanvasView: NSView {
+    override var isFlipped: Bool { true }
+
+    weak var coordinator: TagReorderScrollStrip.Coordinator?
+
+    private var tags: [Tag] = []
+    private var counts: [UUID: Int] = [:]
+    private var selectedTagID: UUID?
+    private var chipViews: [UUID: TagChipInteractiveView] = [:]
+    private var draggingTagID: UUID?
+    private var dragStartFrame: CGRect = .zero
+    private var dragTranslationX: CGFloat = 0
+    private var targetIndex: Int?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func apply(parent: TagReorderScrollStrip) {
+        tags = parent.tags
+        counts = parent.counts
+        selectedTagID = parent.selectedTagID
+        rebuildChipViews()
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        layoutChips(animated: false)
+    }
+
+    private func rebuildChipViews() {
+        subviews.forEach { $0.removeFromSuperview() }
+        chipViews.removeAll()
+
+        for tag in tags {
+            let chipView = TagChipInteractiveView(tagID: tag.id, menu: coordinator?.makeMenu(for: tag.id))
+            chipView.update(
+                rootView: AnyView(
+                    TagChipView(
+                        title: tag.name,
+                        countText: "\(counts[tag.id, default: 0])",
+                        dotColor: tag.accentColor,
+                        isSelected: selectedTagID == tag.id
+                    )
+                )
+            )
+            chipView.onClick = { [weak self] tagID in
+                self?.coordinator?.parent.onSelectTag(tagID)
+            }
+            chipView.onDragBegan = { [weak self] tagID in
+                self?.beginDrag(tagID: tagID)
+            }
+            chipView.onDragChanged = { [weak self] tagID, translation, locationInWindow in
+                self?.updateDrag(tagID: tagID, translation: translation, locationInWindow: locationInWindow)
+            }
+            chipView.onDragEnded = { [weak self] tagID, translation in
+                self?.endDrag(tagID: tagID, translation: translation)
+            }
+            addSubview(chipView)
+            chipViews[tag.id] = chipView
+        }
+    }
+
+    private func beginDrag(tagID: UUID) {
+        guard let chipView = chipViews[tagID] else { return }
+        draggingTagID = tagID
+        dragStartFrame = chipView.frame
+        dragTranslationX = 0
+        targetIndex = currentIndex(for: tagID)
+        chipView.alphaValue = 0.94
+        chipView.layer?.shadowColor = NSColor.black.withAlphaComponent(0.18).cgColor
+        chipView.layer?.shadowOpacity = 1
+        chipView.layer?.shadowRadius = 12
+        chipView.layer?.shadowOffset = CGSize(width: 0, height: 4)
+        chipView.layer?.zPosition = 20
+        needsLayout = true
+    }
+
+    private func updateDrag(tagID: UUID, translation: CGPoint, locationInWindow: NSPoint) {
+        guard draggingTagID == tagID else { return }
+        dragTranslationX = clampedTranslationX(for: translation.x)
+        autoscrollIfNeeded(locationInWindow: locationInWindow)
+        targetIndex = resolvedTargetIndex(for: tagID)
+        needsLayout = true
+    }
+
+    private func endDrag(tagID: UUID, translation: CGPoint) {
+        guard draggingTagID == tagID else { return }
+        let sourceIndex = currentIndex(for: tagID) ?? 0
+        let resolvedTarget = targetIndex ?? sourceIndex
+
+        if let chipView = chipViews[tagID] {
+            chipView.alphaValue = 1
+            chipView.layer?.shadowOpacity = 0
+            chipView.layer?.zPosition = 0
+        }
+
+        draggingTagID = nil
+        dragTranslationX = 0
+        targetIndex = nil
+        needsLayout = true
+
+        if resolvedTarget != sourceIndex {
+            coordinator?.parent.onMoveTag(tagID, resolvedTarget)
+        }
+    }
+
+    private func layoutChips(animated: Bool) {
+        let orderedTagIDs = arrangedTagIDs()
+        var x: CGFloat = 0
+        var widthMap: [UUID: CGFloat] = [:]
+        var slotMap: [UUID: CGFloat] = [:]
+
+        for tagID in orderedTagIDs {
+            guard let chipView = chipViews[tagID] else { continue }
+            let width = chipView.fittingSize.width
+            widthMap[tagID] = width
+            slotMap[tagID] = x
+            x += width + 5
+        }
+
+        let contentWidth = max(x - 5, enclosingScrollView?.contentView.bounds.width ?? bounds.width)
+        setFrameSize(CGSize(width: contentWidth, height: 34))
+
+        for tag in tags {
+            guard let chipView = chipViews[tag.id] else { continue }
+            let width = widthMap[tag.id] ?? chipView.fittingSize.width
+            let slotX = slotMap[tag.id] ?? 0
+            let targetFrame = CGRect(x: slotX, y: 0, width: width, height: 34)
+
+            if draggingTagID == tag.id {
+                let dragX = min(max(dragStartFrame.minX + dragTranslationX, 0), max(contentWidth - width, 0))
+                chipView.frame = CGRect(x: dragX, y: 0, width: width, height: 34)
+            } else if animated {
+                chipView.animator().frame = targetFrame
+            } else {
+                chipView.frame = targetFrame
+            }
+        }
+    }
+
+    private func arrangedTagIDs() -> [UUID] {
+        var tagIDs = tags.map(\.id)
+        guard
+            let draggingTagID,
+            let sourceIndex = tagIDs.firstIndex(of: draggingTagID),
+            let targetIndex
+        else {
+            return tagIDs
+        }
+
+        let moved = tagIDs.remove(at: sourceIndex)
+        tagIDs.insert(moved, at: min(max(targetIndex, 0), tagIDs.count))
+        return tagIDs
+    }
+
+    private func currentIndex(for tagID: UUID) -> Int? {
+        tags.firstIndex(where: { $0.id == tagID })
+    }
+
+    private func resolvedTargetIndex(for tagID: UUID) -> Int {
+        let draggedMidX = dragStartFrame.midX + dragTranslationX
+        let otherIDs = tags.map(\.id).filter { $0 != tagID }
+
+        var index = 0
+        for otherID in otherIDs {
+            guard let chipView = chipViews[otherID] else { continue }
+            if draggedMidX > chipView.frame.midX {
+                index += 1
+            }
+        }
+        return index
+    }
+
+    private func clampedTranslationX(for translationX: CGFloat) -> CGFloat {
+        guard let draggingTagID, let chipView = chipViews[draggingTagID] else {
+            return translationX
+        }
+
+        let width = chipView.frame.width
+        let contentWidth = max(frame.width, enclosingScrollView?.contentView.bounds.width ?? bounds.width)
+        let minTranslation = -dragStartFrame.minX
+        let maxTranslation = max(contentWidth - dragStartFrame.minX - width, 0)
+        return min(max(translationX, minTranslation), maxTranslation)
+    }
+
+    private func autoscrollIfNeeded(locationInWindow: NSPoint) {
+        guard let scrollView = enclosingScrollView else {
+            return
+        }
+
+        let locationInScroll = scrollView.convert(locationInWindow, from: nil)
+        let visibleWidth = scrollView.contentView.bounds.width
+        let maxOffsetX = max(frame.width - visibleWidth, 0)
+        guard maxOffsetX > 0 else { return }
+
+        var nextOffsetX = scrollView.contentView.bounds.origin.x
+        let edgeInset: CGFloat = 32
+        let step: CGFloat = 18
+
+        if locationInScroll.x < edgeInset {
+            nextOffsetX = max(nextOffsetX - step, 0)
+        } else if locationInScroll.x > visibleWidth - edgeInset {
+            nextOffsetX = min(nextOffsetX + step, maxOffsetX)
+        }
+
+        guard nextOffsetX != scrollView.contentView.bounds.origin.x else { return }
+        scrollView.contentView.setBoundsOrigin(NSPoint(x: nextOffsetX, y: 0))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+
+private final class TagChipInteractiveView: NSView {
+    override var isFlipped: Bool { true }
+
+    let tagID: UUID
+    var onClick: ((UUID) -> Void)?
+    var onDragBegan: ((UUID) -> Void)?
+    var onDragChanged: ((UUID, CGPoint, NSPoint) -> Void)?
+    var onDragEnded: ((UUID, CGPoint) -> Void)?
+
+    private let hostingView: NSHostingView<AnyView>
+
+    init(tagID: UUID, menu: NSMenu?) {
+        self.tagID = tagID
+        self.hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+        super.init(frame: .zero)
+        self.menu = menu
+        wantsLayer = true
+        layer?.masksToBounds = false
+
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(rootView: AnyView) {
+        hostingView.rootView = rootView
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let startPoint = event.locationInWindow
+        var lastPoint = startPoint
+        var hasDragged = false
+
+        while let nextEvent = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            lastPoint = nextEvent.locationInWindow
+            switch nextEvent.type {
+            case .leftMouseDragged:
+                let translation = CGPoint(x: lastPoint.x - startPoint.x, y: lastPoint.y - startPoint.y)
+                if hasDragged == false, abs(translation.x) > 3 {
+                    hasDragged = true
+                    onDragBegan?(tagID)
+                }
+                if hasDragged {
+                    onDragChanged?(tagID, translation, lastPoint)
+                }
+            case .leftMouseUp:
+                let translation = CGPoint(x: lastPoint.x - startPoint.x, y: lastPoint.y - startPoint.y)
+                if hasDragged {
+                    onDragEnded?(tagID, translation)
+                } else {
+                    onClick?(tagID)
+                }
+                return
+            default:
+                break
+            }
+        }
+    }
 }
 
 private struct EditClipSheet: View {

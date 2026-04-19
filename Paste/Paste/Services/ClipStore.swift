@@ -165,16 +165,11 @@ final class ClipStore {
             tag.isSystem == false
         }
 
-        try ensureCustomTagOrdering(tags)
-        try ensureCustomTagColors(tags)
-        return tags.sorted { lhs, rhs in
-            let lhsOrder = lhs.sortOrder ?? Int.max
-            let rhsOrder = rhs.sortOrder ?? Int.max
-            if lhsOrder != rhsOrder {
-                return lhsOrder < rhsOrder
-            }
-            return lhs.name.localizedCompare(rhs.name) == .orderedAscending
-        }
+        let orderedTags = tags.sorted(by: customTagSort)
+        try ensureCustomTagOrdering(orderedTags)
+        let normalizedTags = tags.sorted(by: customTagSort)
+        try ensureCustomTagColors(normalizedTags)
+        return tags.sorted(by: customTagSort)
     }
 
     func customTagItemCounts() throws -> [UUID: Int] {
@@ -420,7 +415,7 @@ final class ClipStore {
     private func ensureCustomTagOrdering(_ tags: [Tag]) throws {
         var hasChanges = false
 
-        for (index, tag) in tags.enumerated() where tag.sortOrder != index {
+        for (index, tag) in tags.sorted(by: customTagSort).enumerated() where tag.sortOrder != index {
             tag.sortOrder = index
             hasChanges = true
         }
@@ -428,6 +423,15 @@ final class ClipStore {
         if hasChanges {
             try context.save()
         }
+    }
+
+    private func customTagSort(_ lhs: Tag, _ rhs: Tag) -> Bool {
+        let lhsOrder = lhs.sortOrder ?? Int.max
+        let rhsOrder = rhs.sortOrder ?? Int.max
+        if lhsOrder != rhsOrder {
+            return lhsOrder < rhsOrder
+        }
+        return lhs.name.localizedCompare(rhs.name) == .orderedAscending
     }
 
     private func ensureCustomTagColors(_ tags: [Tag]) throws {
