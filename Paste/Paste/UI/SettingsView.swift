@@ -12,6 +12,12 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("行为") {
+                Picker("外观模式", selection: $settings.appearanceMode) {
+                    ForEach(AppSettings.AppearanceMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+
                 Toggle("复制时播放音效", isOn: $settings.isSoundEnabled)
 
                 Toggle(isOn: $settings.isClipboardMonitoringEnabled) {

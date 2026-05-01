@@ -34,6 +34,7 @@ struct ContentView: View {
     @State private var itemRowHeights: [UUID: CGFloat] = [:]
     @State private var itemFrames: [UUID: CGRect] = [:]
     @State private var draggedItemOffset: CGSize = .zero
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let store = ClipStore(context: modelContext)
@@ -100,6 +101,30 @@ struct ContentView: View {
         .onChange(of: pendingImage != nil) { _, _ in
             requestComposerFocus()
         }
+    }
+
+    private var searchBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.08)
+    }
+
+    private var searchBorderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.16) : Color.black.opacity(0.06)
+    }
+
+    private var searchIconColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.82) : Color.black.opacity(0.75)
+    }
+
+    private var searchTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.92) : Color.black.opacity(0.84)
+    }
+
+    private var searchPlaceholderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.42) : Color.black.opacity(0.32)
+    }
+
+    private var composerBackgroundColor: Color {
+        Color(NSColor.controlBackgroundColor)
     }
 
     private func itemsList(store: ClipStore, items: [ClipItem], customTags: [Tag]) -> some View {
@@ -355,7 +380,7 @@ struct ContentView: View {
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(Color.black.opacity(0.75))
+                .foregroundStyle(searchIconColor)
                 .font(.system(size: 14, weight: .medium))
 
             TextField(
@@ -363,20 +388,20 @@ struct ContentView: View {
                 text: $searchText,
                 prompt: Text("搜索剪贴板历史...")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.black.opacity(0.32))
+                    .foregroundStyle(searchPlaceholderColor)
             )
             .textFieldStyle(.plain)
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(Color.black.opacity(0.84))
+            .foregroundStyle(searchTextColor)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.black.opacity(0.14))
+                .fill(searchBackgroundColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                        .stroke(searchBorderColor, lineWidth: 1)
                 )
         )
         .padding(.horizontal, 16)
@@ -529,7 +554,7 @@ struct ContentView: View {
         .padding(.bottom, 14)
         .background(
             RoundedRectangle(cornerRadius: 0, style: .continuous)
-                .fill(Color.white)
+                .fill(composerBackgroundColor)
         )
         .overlay(alignment: .center) {
             if isImageDropTargeted {
@@ -719,6 +744,7 @@ private struct TagChipView: View {
     let countText: String?
     let dotColor: Color?
     let isSelected: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 5) {
@@ -732,11 +758,11 @@ private struct TagChipView: View {
 
             if let countText {
                 Text(countText)
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.92) : Color.primary.opacity(0.52))
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.92) : (colorScheme == .dark ? Color.white.opacity(0.6) : Color.primary.opacity(0.52)))
             }
         }
         .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.78))
+        .foregroundStyle(isSelected ? Color.white : (colorScheme == .dark ? Color.white.opacity(0.86) : Color.primary.opacity(0.78)))
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(

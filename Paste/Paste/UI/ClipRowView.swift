@@ -11,17 +11,26 @@ struct ClipRowView: View {
     let onTagChange: (Tag?) -> Void
     private let cardCornerRadius: CGFloat = 13
     @State private var isTagPickerPresented = false
+    @Environment(\.colorScheme) private var colorScheme
 
     private var tagBorderColor: Color {
-        currentTag?.accentColor.opacity(0.32) ?? Color.black.opacity(0.08)
+        currentTag?.accentColor.opacity(colorScheme == .dark ? 0.5 : 0.32) ?? (colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08))
     }
 
     private var tagBackgroundColor: Color {
-        currentTag?.accentColor.opacity(0.12) ?? Color.black.opacity(0.05)
+        currentTag?.accentColor.opacity(colorScheme == .dark ? 0.22 : 0.12) ?? (colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05))
     }
 
     private var tagForegroundColor: Color {
-        currentTag?.accentColor.opacity(0.95) ?? Color.secondary.opacity(0.95)
+        currentTag?.accentColor.opacity(0.95) ?? (colorScheme == .dark ? Color.white.opacity(0.88) : Color.secondary.opacity(0.95))
+    }
+
+    private var cardFillColor: Color {
+        Color(NSColor.controlBackgroundColor)
+    }
+
+    private var cardStrokeColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.04)
     }
 
     private var displayTitle: String {
@@ -166,10 +175,10 @@ struct ClipRowView: View {
             .padding(.trailing, 26)
             .background(
                 RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
-                    .fill(Color.white)
+                    .fill(cardFillColor)
                     .overlay(
                         RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
-                            .stroke(Color.black.opacity(0.04), lineWidth: 1)
+                            .stroke(cardStrokeColor, lineWidth: 1)
                     )
             )
             .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
@@ -215,7 +224,7 @@ struct ClipRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.black.opacity(0.04))
+                .fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.04))
         )
     }
 }

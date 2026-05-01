@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 .environmentObject(settings)
                 .environmentObject(self)
                 .modelContainer(container)
+                .preferredColorScheme(settings.preferredColorScheme)
         )
     }
 

@@ -1,6 +1,23 @@
 import Foundation
+import SwiftUI
 
 final class AppSettings: ObservableObject {
+    enum AppearanceMode: String, CaseIterable, Identifiable {
+        case system
+        case light
+        case dark
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .system: return "跟随系统"
+            case .light: return "浅色"
+            case .dark: return "深色"
+            }
+        }
+    }
+
     enum CopySound: String, Identifiable {
         case frog
 
@@ -47,6 +64,12 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var appearanceMode: AppearanceMode {
+        didSet {
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: Self.appearanceModeKey)
+        }
+    }
+
     var onClipboardMonitoringChanged: ((Bool) -> Void)?
 
     private static let monitoringKey = "settings.clipboardMonitoringEnabled"
@@ -54,6 +77,7 @@ final class AppSettings: ObservableObject {
     private static let soundKey = "settings.soundEnabled"
     private static let copySoundKey = "settings.copySound"
     private static let updateCheckKey = "settings.automaticUpdateCheckEnabled"
+    private static let appearanceModeKey = "settings.appearanceMode"
 
     init() {
         isClipboardMonitoringEnabled = UserDefaults.standard.bool(forKey: Self.monitoringKey)
@@ -70,6 +94,21 @@ final class AppSettings: ObservableObject {
             isAutomaticUpdateCheckEnabled = true
         } else {
             isAutomaticUpdateCheckEnabled = UserDefaults.standard.bool(forKey: Self.updateCheckKey)
+        }
+        let rawAppearance = UserDefaults.standard.string(forKey: Self.appearanceModeKey)
+        appearanceMode = AppearanceMode(rawValue: rawAppearance ?? "") ?? .system
+    }
+}
+
+extension AppSettings {
+    var preferredColorScheme: ColorScheme? {
+        switch appearanceMode {
+        case .system:
+            nil
+        case .light:
+            .light
+        case .dark:
+            .dark
         }
     }
 }

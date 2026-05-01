@@ -15,6 +15,7 @@ struct PasteApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appDelegate.settings)
+                .preferredColorScheme(appDelegate.settings.preferredColorScheme)
                 .frame(width: 380)
                 .modelContainer(container)
         }
